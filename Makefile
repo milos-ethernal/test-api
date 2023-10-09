@@ -9,6 +9,6 @@ run-intermediary:
 	$(MAKE) -C web_server run
 
 run-gpjc-api:
-	$(MAKE) -C test-api run
+	$(MAKE) -C gpjc-api run
 
 run: run-intermediary run-gpjc-api

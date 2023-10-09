@@ -25,7 +25,6 @@ async fn main() -> std::io::Result<()> {
     env_logger::init();
 
     // connect to SQLite DB
-    //let manager = SqliteConnectionManager::file("gpjc_logs.db");
     let pool = create_table_and_pool();
 
     set_env();

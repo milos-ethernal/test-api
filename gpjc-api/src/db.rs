@@ -1,113 +1,111 @@
-use r2d2::Pool;
-use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::named_params;
+use odbc::{
+    create_environment_v3,
+    odbc_safe::AutocommitOn,
+    Connection, DiagnosticRecord,
+    ResultSetState::{Data, NoData},
+    Statement,
+};
 
 use crate::types::LogEntry;
 
-pub fn create_table_and_pool() -> Pool<SqliteConnectionManager> {
-    // Create a connection manager for SQLite
-    let manager = SqliteConnectionManager::file("gpjc_logs.db");
-
-    // Create a pool of SQLite connections
-    let pool = r2d2::Pool::new(manager).expect("Failed to create connection pool");
-
-    // Establish a connection and create the table if it doesn't exist
-    let conn = pool
-        .get()
-        .expect("Failed to get a connection from the pool");
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS gpjc_logs (
-            TRANSACTION_ID INTEGER PRIMARY KEY,
-            RESULT INTEGER,
-            COMPUTATION_START TEXT,
-            COMPUTATION_END TEXT,
-            IS_INITIATOR BOOLEAN
-        )",
-        (),
-    )
-    .expect("Failed to create gpjc_logs table");
-
-    pool
+pub enum Query {
+    CreateTable,
+    InsertLog,
+    UpdateLog,
+    GetLog,
 }
 
-pub fn insert_data(
-    pool: &Pool<SqliteConnectionManager>,
-    transaction_id: i32,
-    result: i32,
-    computation_start: String,
-    is_initiator: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let conn = pool.get()?;
-    conn.execute(
-        "INSERT INTO gpjc_logs (TRANSACTION_ID, RESULT, COMPUTATION_START, IS_INITIATOR) VALUES (:TRANSACTION_ID, :RESULT, :COMPUTATION_START, :IS_INITIATOR)",
-        named_params! {
-            ":TRANSACTION_ID": &transaction_id,
-            ":RESULT": &result,
-            ":COMPUTATION_START": &computation_start,
-            ":IS_INITIATOR": &is_initiator
-        },
-    )?;
-    Ok(())
+/// # CreateTable
+/// No params
+/// # InsertLog
+/// TransactionId, IsInitiator = (0, 1)
+/// # UpdateLog
+/// Result, Proof, TransactionId
+/// # GetLog
+/// TransactionId
+pub fn execute_query(
+    query: Query,
+    params: Vec<String>,
+) -> Result<Option<LogEntry>, DiagnosticRecord> {
+    let env = create_environment_v3().map_err(|e| e.unwrap())?;
+
+    let connection_string = "Driver={ODBC Driver 18 for SQL Server};\
+    Server=0.0.0.0;\
+    UID=SA;\
+    PWD=Ethernal!123;TrustServerCertificate=Yes;Database=gpjc_data;\
+    ";
+
+    let conn = env.connect_with_connection_string(&connection_string)?;
+    execute_statement(&conn, query, params)
 }
 
-pub fn update_data(
-    pool: &Pool<SqliteConnectionManager>,
-    transaction_id: i32,
-    result: i32,
-    computation_end: String,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let conn = pool.get()?;
-    conn.execute(
-        "UPDATE gpjc_logs SET RESULT = :RESULT, COMPUTATION_END = :COMPUTATION_END WHERE TRANSACTION_ID = :TRANSACTION_ID",
-        named_params! {
-            ":RESULT": &result,
-            ":COMPUTATION_END": &computation_end,
-            ":TRANSACTION_ID": &transaction_id
-        },
-    )?;
-    Ok(())
-}
+fn execute_statement<'env>(
+    conn: &Connection<'env, AutocommitOn>,
+    query: Query,
+    params: Vec<String>,
+) -> Result<Option<LogEntry>, DiagnosticRecord> {
+    let stmt = Statement::with_parent(conn)?;
 
-pub fn _select_data(
-    pool: &Pool<SqliteConnectionManager>,
-    transaction_id: i32,
-) -> Result<Option<LogEntry>, Box<dyn std::error::Error>> {
-    let conn = pool.get()?;
-    let mut stmt = conn.prepare("SELECT * FROM gpjc_logs WHERE TRANSACTION_ID = ?")?;
-    let mut rows = stmt.query(&[&transaction_id])?;
-    if let Some(row) = rows.next()? {
-        let log_entry = LogEntry {
-            transaction_id: row.get(0)?,
-            result: row.get(1)?,
-            computation_start: row.get(2)?,
-            computation_end: row.get(3)?,
-            is_initiator: row.get(4)?,
-        };
-        Ok(Some(log_entry))
-    } else {
-        Ok(None)
-    }
-}
+    match query {
+        Query::CreateTable => {
+            let sql_text = "IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'gpjc_logs')
+                                    CREATE TABLE gpjc_logs (
+                                        TRANSACTION_ID INTEGER PRIMARY KEY,
+                                        RESULT INTEGER,
+                                        COMPUTATION_START DATETIME,
+                                        COMPUTATION_END DATETIME,
+                                        PROOF INTEGER,
+                                        IS_INITIATOR BIT
+                                    )";
+            stmt.exec_direct(&sql_text)?;
+        }
+        Query::InsertLog => {
+            if params.len() != 2 {
+                return Err(DiagnosticRecord::empty());
+            }
+            let sql_text = format!("INSERT INTO gpjc_logs (TRANSACTION_ID, RESULT, COMPUTATION_START, IS_INITIATOR) VALUES ({}, {}, {}, {})", params[0], "-1", "GETUTCDATE()".to_string(), params[1]);
+            stmt.exec_direct(&sql_text)?;
+        }
+        Query::UpdateLog => {
+            if params.len() != 3 {
+                return Err(DiagnosticRecord::empty());
+            }
+            let sql_text = format!("UPDATE gpjc_logs SET RESULT = {}, COMPUTATION_END = {}, PROOF = {} WHERE TRANSACTION_ID = {}",params[0], "GETUTCDATE()".to_string(), params[1], params[2]);
+            stmt.exec_direct(&sql_text)?;
+        }
+        Query::GetLog => {
+            if params.len() != 1 {
+                return Err(DiagnosticRecord::empty());
+            }
+            let sql_text = format!(
+                "SELECT * FROM gpjc_logs WHERE TRANSACTION_ID = {}",
+                params[0]
+            );
+            match stmt.exec_direct(&sql_text)? {
+                Data(mut stmt) => {
+                    let cols = stmt.num_result_cols()?;
+                    while let Some(mut cursor) = stmt.fetch()? {
+                        let mut params: Vec<String> = vec![];
+                        for i in 1..(cols + 1) {
+                            match cursor.get_data::<&str>(i as u16)? {
+                                Some(val) => params.push(val.to_owned()),
+                                None => params.push("NULL".to_string()),
+                            }
+                        }
 
-pub fn select_all_data(
-    pool: &Pool<SqliteConnectionManager>,
-) -> Result<Vec<LogEntry>, Box<dyn std::error::Error>> {
-    let conn = pool.get()?;
-    let mut stmt = conn.prepare("SELECT * FROM gpjc_logs")?;
-    let rows = stmt.query_map((), |row| {
-        Ok(LogEntry {
-            transaction_id: row.get(0)?,
-            result: row.get(1)?,
-            computation_start: row.get(2)?,
-            computation_end: row.get(3)?,
-            is_initiator: row.get(4)?,
-        })
-    })?;
-
-    let mut result = Vec::new();
-    for row in rows {
-        result.push(row?);
+                        return Ok(Some(LogEntry {
+                            transaction_id: params[0].to_owned(),
+                            result: params[1].to_owned(),
+                            computation_start: params[2].to_owned(),
+                            computation_end: params[3].to_owned(),
+                            is_initiator: params[4].to_owned(),
+                        }));
+                    }
+                }
+                NoData(_) => return Ok(None),
+            }
+        }
     }
 
-    Ok(result)
+    Ok(None)
 }

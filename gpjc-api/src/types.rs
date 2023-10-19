@@ -20,10 +20,15 @@ pub struct ServerStartRequest {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+pub struct ProofRequest {
+    pub tx_id: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 pub struct LogEntry {
-    pub transaction_id: i32,
-    pub result: i32,
+    pub transaction_id: String,
+    pub result: String,
     pub computation_start: String,
     pub computation_end: String,
-    pub is_initiator: bool,
+    pub is_initiator: String,
 }

@@ -138,7 +138,7 @@ namespace private_join_and_compute
     *result.mutable_encrypted_sum() = sum.ToBytes();
     result.set_intersection_size(intersection.size());
 
-    std::cout << "Intersection size = " << intersection.size() << std::endl;
+    std::cout << intersection.size();
     return result;
   }
 

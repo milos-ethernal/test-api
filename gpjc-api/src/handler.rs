@@ -137,23 +137,19 @@ pub fn start_server(transaction_id: String) -> Response {
     }
 }
 
-#[post("/start-client")]
+#[post("/api/start-client")]
 pub async fn start_client_process(request_data: Json<ClientStartRequest>) -> impl Responder {
-    let resp = start_client(
-        FromStr::from_str(request_data.tx_id.as_str()).unwrap(),
-        request_data.to.clone(),
-    );
+    tokio::spawn(async move {
+        let _resp = start_client(
+            FromStr::from_str(request_data.tx_id.as_str()).unwrap(),
+            request_data.to.clone(),
+        );
+    });
 
-    if resp.exit_code == 0 {
-        return HttpResponse::Ok().content_type(APPLICATION_JSON).json(resp);
-    } else {
-        return HttpResponse::BadRequest()
-            .content_type(APPLICATION_JSON)
-            .json(resp);
-    }
+    return HttpResponse::Ok();
 }
 
-#[post("/start-server")]
+#[post("/api/start-server")]
 pub async fn start_server_process(request_data: Json<ServerStartRequest>) -> impl Responder {
     tokio::spawn(async move {
         let resp = start_server(request_data.tx_id.clone());
@@ -168,7 +164,7 @@ pub async fn start_server_process(request_data: Json<ServerStartRequest>) -> imp
 
         let client = reqwest::Client::new();
         let _res = client
-            .post("http://localhost:4000/submitTransactionProof")
+            .post("http://localhost:4000/api/submitTransactionProof")
             .json(&map)
             .send()
             .await;
@@ -177,7 +173,7 @@ pub async fn start_server_process(request_data: Json<ServerStartRequest>) -> imp
     return HttpResponse::Ok();
 }
 
-#[get("/proof")]
+#[get("/api/proof")]
 pub async fn get_proof(request_data: Json<ProofRequest>) -> impl Responder {
     let params = vec![FromStr::from_str(request_data.tx_id.as_str()).unwrap()];
     match db::execute_query(db::Query::GetLog, params) {

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct Response {
     pub exit_code: i32,
     pub data: String,

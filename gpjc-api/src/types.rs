@@ -9,7 +9,7 @@ pub struct Response {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ClientStartRequest {
     pub tx_id: String,
-    pub policy_id: String,
+    pub receiver: String,
     pub to: String,
 }
 

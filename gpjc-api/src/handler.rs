@@ -1,10 +1,12 @@
 use std::collections::HashMap;
+use std::error::Error;
 use std::fs;
 use std::process::Command;
 use std::str::FromStr;
 
 use actix_web::web::Json;
 use actix_web::{get, post, HttpResponse, Responder};
+use csv::Writer;
 
 use crate::constants::APPLICATION_JSON;
 use crate::db;
@@ -27,6 +29,13 @@ fn get_path(file_name: &str) -> String {
         .find(|&x| x.contains(file_name))
         .unwrap()
         .to_string()
+}
+
+fn create_csv(receiver: String) -> Result<(), Box<dyn Error>> {
+    let mut wtr = Writer::from_path(get_path("UN_test.csv"))?;
+    wtr.write_record(&[receiver, 0.to_string()])?;
+    wtr.flush()?;
+    Ok(())
 }
 
 pub fn start_client(_transaction_id: i32, _destination_address: String) -> Response {
@@ -140,10 +149,15 @@ pub fn start_server(transaction_id: String) -> Response {
 #[post("/api/start-client")]
 pub async fn start_client_process(request_data: Json<ClientStartRequest>) -> impl Responder {
     tokio::spawn(async move {
-        let _resp = start_client(
-            FromStr::from_str(request_data.tx_id.as_str()).unwrap(),
-            request_data.to.clone(),
-        );
+        match create_csv(request_data.receiver.clone()) {
+            Ok(()) => {
+                let _resp = start_client(
+                    FromStr::from_str(request_data.tx_id.as_str()).unwrap(),
+                    request_data.to.clone(),
+                );
+            }
+            Err(err) => println!("Creation of csv file failed {}", err),
+        }
     });
 
     return HttpResponse::Ok();
